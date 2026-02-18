@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Focus Timer</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#E8927C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Focus">
+<link rel="apple-touch-icon" href="icon-512.png">
+
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@200&family=Nunito+Sans:wght@200;300&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  font-family: 'Nunito Sans', sans-serif;
+  /* Prevent iOS rubber-band scroll */
+  overscroll-behavior: none;
+  /* Fill under notch / Dynamic Island */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* ══════════════════════════════════════
+   SETUP
+══════════════════════════════════════ */
+#setup {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity 0.6s ease, transform 0.6s ease;
+  z-index: 20;
+}
+#setup.hidden { opacity: 0; pointer-events: none; transform: scale(0.97); }
+
+.setup-inner {
+  width: min(600px, 92vw);
+  padding: 48px 52px 44px;
+  border: 1px solid currentColor;
+}
+
+.setup-inner h1 {
+  font-family: 'Nunito', sans-serif;
+  font-weight: 200;
+  font-size: clamp(1rem, 2vw, 1.3rem);
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  margin-bottom: 40px;
+  opacity: 0.55;
+}
+
+.field { margin-bottom: 26px; }
+.field label {
+  display: block;
+  font-size: 0.55rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  opacity: 0.45;
+  margin-bottom: 8px;
+}
+
+.field input[type="text"],
+.field input[type="number"] {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid currentColor;
+  padding: 7px 2px;
+  color: inherit;
+  font-family: 'Nunito Sans', sans-serif;
+  font-weight: 200;
+  font-size: 1.5rem;
+  outline: none;
+}
+.field input::placeholder { opacity: 0.25; color: inherit; }
+
+.duration-row { display: flex; align-items: baseline; gap: 10px; }
+.duration-row input { flex: 1; }
+.duration-row span { font-size: 0.65rem; letter-spacing: 0.2em; opacity: 0.4; text-transform: uppercase; }
+
+/* Palette */
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+.palette-swatch {
+  aspect-ratio: 2/1;
+  cursor: pointer;
+  position: relative;
+  border: 2px solid transparent;
+  transition: transform 0.15s, border-color 0.15s;
+  overflow: hidden;
+}
+.palette-swatch:hover { transform: scale(1.05); }
+.palette-swatch.active { border-color: currentColor; }
+.swatch-bg { position: absolute; inset: 0; }
+.swatch-fg { position: absolute; bottom: 0; left: 0; right: 0; height: 38%; }
+
+/* Toggles */
+.toggle-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.tog {
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid currentColor;
+  color: inherit;
+  font-family: 'Nunito Sans', sans-serif;
+  font-weight: 300;
+  font-size: 0.6rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  opacity: 0.38;
+  transition: opacity 0.18s;
+}
+.tog.active { opacity: 1; }
+.tog:hover { opacity: 0.72; }
+
+.start-btn {
+  width: 100%; margin-top: 32px;
+  padding: 15px;
+  border: none; cursor: pointer;
+  font-family: 'Nunito Sans', sans-serif;
+  font-weight: 300;
+  font-size: 0.7rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  transition: opacity 0.18s;
+}
+.start-btn:hover { opacity: 0.8; }
+
+/* ══════════════════════════════════════
+   TIMER
+══════════════════════════════════════ */
+#timer {
+  position: fixed; inset: 0;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.6s;
+}
+#timer.visible { opacity: 1; pointer-events: all; }
+
+/* Two solid color layers */
+#layerBg  { position: absolute; inset: 0; }
+#layerFill {
+  position: absolute; left: 0; right: 0;
+  /* NO transition — hard step on each second */
+}
+
+/* Two text layers, clip-path swaps per second (also no transition) */
+.tl {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  pointer-events: none;
+  /* NO transition on clip-path */
+}
+
+/* Big digits */
+.digits {
+  font-family: 'Nunito', sans-serif;
+  font-weight: 200;
+  /* Size: fill most of screen width */
+  font-size: clamp(5rem, 26vw, 22rem);
+  line-height: 1;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+/* Title — sits below center, smaller */
+.title-label {
+  font-family: 'Nunito Sans', sans-serif;
+  font-weight: 300;
+  font-size: clamp(0.8rem, 2.2vw, 1.6rem);
+  letter-spacing: 0.18em;
+  margin-top: 0.45em;
+  opacity: 0.7;
+}
+
+/* Controls */
+#timerControls {
+  position: absolute;
+  bottom: 36px; left: 0; right: 0;
+  display: flex; justify-content: center; gap: 16px;
+  z-index: 10;
+}
+.ctrl {
+  padding: 8px 22px;
+  background: transparent;
+  border: 1px solid currentColor;
+  color: inherit;
+  font-family: 'Nunito Sans', sans-serif;
+  font-weight: 300;
+  font-size: 0.58rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 0.18s;
+}
+.ctrl:hover { opacity: 1; }
+
+/* ══════════════════════════════════════
+   DONE
+══════════════════════════════════════ */
+#done {
+  position: fixed; inset: 0; z-index: 30;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.5s;
+}
+#done.visible { opacity: 1; pointer-events: all; }
+#doneWord {
+  font-family: 'Nunito', sans-serif;
+  font-weight: 200;
+  font-size: clamp(4rem, 14vw, 12rem);
+  letter-spacing: 0.1em;
+  margin-bottom: 32px;
+}
+.done-btns { display: flex; gap: 14px; }
+</style>
+</head>
+<body>
+
+<!-- ══ SETUP ══ -->
+<div id="setup">
+  <div class="setup-inner">
+    <h1>Focus Timer</h1>
+
+    <div class="field">
+      <label>Title — optional</label>
+      <input type="text" id="titleInput" placeholder="Clean the room" maxlength="36">
+    </div>
+
+    <div class="field">
+      <label>Duration</label>
+      <div class="duration-row">
+        <input type="number" id="minsInput" value="25" min="0" max="180">
+        <span>min</span>
+        <input type="number" id="secsInput" value="0" min="0" max="59">
+        <span>sec</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Colour Combination</label>
+      <div class="palette-grid" id="paletteGrid"></div>
+    </div>
+
+    <div class="field">
+      <label>Direction</label>
+      <div class="toggle-row">
+        <button class="tog active" data-group="dir" data-val="fill" onclick="pick(this)">▲ Fill Up</button>
+        <button class="tog" data-group="dir" data-val="drain" onclick="pick(this)">▼ Drain Down</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Show Numbers</label>
+      <div class="toggle-row">
+        <button class="tog active" data-group="nums" data-val="yes" onclick="pick(this)">Show</button>
+        <button class="tog" data-group="nums" data-val="no" onclick="pick(this)">Hide</button>
+      </div>
+    </div>
+
+    <button class="start-btn" id="startBtn" onclick="startTimer()">Begin</button>
+  </div>
+</div>
+
+<!-- ══ TIMER ══ -->
+<div id="timer">
+  <div id="layerBg"></div>
+  <div id="layerFill"></div>
+
+  <!-- Text: fill-colored, clipped to BG zone -->
+  <div class="tl" id="textOnBg">
+    <div class="digits"  id="digitsOnBg">00:00</div>
+    <div class="title-label" id="titleOnBg"></div>
+  </div>
+
+  <!-- Text: bg-colored, clipped to FILL zone -->
+  <div class="tl" id="textOnFill">
+    <div class="digits"  id="digitsOnFill">00:00</div>
+    <div class="title-label" id="titleOnFill"></div>
+  </div>
+
+  <div id="timerControls">
+    <button class="ctrl" id="pauseBtn" onclick="togglePause()">Pause</button>
+    <button class="ctrl" onclick="goSetup()">Setup</button>
+  </div>
+</div>
+
+<!-- ══ DONE ══ -->
+<div id="done">
+  <div id="doneWord">Done.</div>
+  <div class="done-btns">
+    <button class="ctrl" id="doneRestart" onclick="restartTimer()">Again</button>
+    <button class="ctrl" id="doneSetup"   onclick="goSetup()">Setup</button>
+  </div>
+</div>
+
+<script>
+// ── Wada palettes ──────────────────────────────────────
+const COMBOS = [
+  { name: "Salmon & Navy",       bg: "#E8927C", fill: "#2B3A52" },
+  { name: "Peach & Moss",        bg: "#EDCFB0", fill: "#6B7C4E" },
+  { name: "Ivory & Indigo",      bg: "#F0EAD8", fill: "#2E3A6E" },
+  { name: "Ochre & Slate",       bg: "#C9A030", fill: "#3A4A5C" },
+  { name: "Rose & Lichen",       bg: "#D4A5A0", fill: "#7A7A5C" },
+  { name: "Apricot & Teal",      bg: "#F0A070", fill: "#2A6060" },
+  { name: "Sky & Terracotta",    bg: "#A8C8D8", fill: "#8C3A1E" },
+  { name: "Sage & Plum",         bg: "#96A87A", fill: "#4A2848" },
+  { name: "Cream & Burgundy",    bg: "#F2E8D9", fill: "#7A2832" },
+  { name: "Dusty Blue & Sienna", bg: "#7094A8", fill: "#8C5030" },
+  { name: "Straw & Forest",      bg: "#D4C090", fill: "#2A4A32" },
+  { name: "Blush & Charcoal",    bg: "#DDB8A8", fill: "#2A2A2A" },
+];
+
+let activePaletteIdx = 0;
+const state = { dir: 'fill', nums: 'yes' };
+
+// ── Build swatches ─────────────────────────────────────
+const grid = document.getElementById('paletteGrid');
+COMBOS.forEach((c, i) => {
+  const el = document.createElement('div');
+  el.className = 'palette-swatch' + (i === 0 ? ' active' : '');
+  el.title = c.name;
+  el.innerHTML = `<div class="swatch-bg" style="background:${c.bg}"></div>
+                  <div class="swatch-fg" style="background:${c.fill}"></div>`;
+  el.onclick = () => {
+    document.querySelectorAll('.palette-swatch').forEach(s => s.classList.remove('active'));
+    el.classList.add('active');
+    activePaletteIdx = i;
+    applySetupTheme(i);
+  };
+  grid.appendChild(el);
+});
+
+function applySetupTheme(i) {
+  const c = COMBOS[i];
+  document.getElementById('setup').style.background = c.bg;
+  document.getElementById('setup').style.color = c.fill;
+  const btn = document.getElementById('startBtn');
+  btn.style.background = c.fill;
+  btn.style.color = c.bg;
+}
+applySetupTheme(0);
+
+function pick(btn) {
+  const group = btn.dataset.group;
+  document.querySelectorAll(`[data-group="${group}"]`).forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  state[group] = btn.dataset.val;
+}
+
+// ── Timer state ─────────────────────────────────────────
+let totalSecs = 0, remaining = 0;
+let interval = null, paused = false;
+let currentDir = 'fill', showNums = true;
+
+function startTimer() {
+  const m = parseInt(document.getElementById('minsInput').value) || 0;
+  const s = parseInt(document.getElementById('secsInput').value) || 0;
+  totalSecs = m * 60 + s;
+  if (totalSecs <= 0) { alert('Set a duration.'); return; }
+
+  remaining = totalSecs;
+  paused = false;
+  currentDir = state.dir;
+  showNums = state.nums === 'yes';
+
+  const c = COMBOS[activePaletteIdx];
+  const title = document.getElementById('titleInput').value.trim();
+
+  // Layers
+  document.getElementById('layerBg').style.background = c.bg;
+  document.getElementById('layerFill').style.background = c.fill;
+
+  // Position fill layer — no CSS transition, hard steps
+  const fl = document.getElementById('layerFill');
+  fl.style.transition = 'none';
+  if (currentDir === 'fill') {
+    fl.style.bottom = '0'; fl.style.top = 'auto';
+  } else {
+    fl.style.top = '0'; fl.style.bottom = 'auto';
+  }
+  fl.style.height = '0%';
+
+  // Text colors
+  document.getElementById('textOnBg').style.color   = c.fill; // fill-colored on bg
+  document.getElementById('textOnFill').style.color = c.bg;   // bg-colored on fill
+
+  // Controls: color matches fill layer (they're at bottom, mostly on bg zone early on)
+  document.getElementById('timerControls').style.color = c.fill;
+
+  // Done screen
+  document.getElementById('done').style.background = c.fill;
+  document.getElementById('done').style.color = c.bg;
+  ['doneRestart','doneSetup'].forEach(id => {
+    document.getElementById(id).style.color = c.bg;
+    document.getElementById(id).style.borderColor = c.bg;
+  });
+
+  // Show/hide digits
+  ['OnBg','OnFill'].forEach(sfx => {
+    document.getElementById('digits'+sfx).style.display = showNums ? '' : 'none';
+    const tl = document.getElementById('title'+sfx);
+    tl.textContent = title;
+    tl.style.display = title ? '' : 'none';
+  });
+
+  // No transitions on clip-path either — instant steps
+  document.getElementById('textOnBg').style.transition   = 'none';
+  document.getElementById('textOnFill').style.transition = 'none';
+
+  document.getElementById('setup').classList.add('hidden');
+  document.getElementById('done').classList.remove('visible');
+  document.getElementById('timer').classList.add('visible');
+  document.getElementById('pauseBtn').textContent = 'Pause';
+
+  render();
+  clearInterval(interval);
+  interval = setInterval(tick, 1000);
+}
+
+function tick() {
+  if (paused) return;
+  remaining = Math.max(0, remaining - 1);
+  render();
+  if (remaining === 0) {
+    clearInterval(interval);
+    setTimeout(showDone, 600);
+  }
+}
+
+function render() {
+  const timeStr = fmt(remaining);
+  document.getElementById('digitsOnBg').textContent   = timeStr;
+  document.getElementById('digitsOnFill').textContent = timeStr;
+
+  // progress: 0 at start → 1 at end
+  const progress = (totalSecs - remaining) / totalSecs;
+  const pct = progress * 100; // 0→100
+
+  const fl = document.getElementById('layerFill');
+
+  if (currentDir === 'fill') {
+    // Rising fill from bottom
+    fl.style.height = pct + '%';
+    // textOnFill: visible in bottom pct% (fill zone)
+    document.getElementById('textOnFill').style.clipPath = `inset(${100 - pct}% 0 0 0)`;
+    // textOnBg: visible in top (100-pct)% (bg zone)
+    document.getElementById('textOnBg').style.clipPath   = `inset(0 0 ${pct}% 0)`;
+  } else {
+    // Draining from top — fill shrinks downward
+    fl.style.height = (100 - pct) + '%';
+    // textOnFill: visible in top (100-pct)% (fill zone, shrinking)
+    document.getElementById('textOnFill').style.clipPath = `inset(0 0 ${pct}% 0)`;
+    // textOnBg: visible in bottom pct% (bg zone, growing)
+    document.getElementById('textOnBg').style.clipPath   = `inset(${100 - pct}% 0 0 0)`;
+  }
+}
+
+function fmt(s) {
+  return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+}
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+}
+
+function goSetup() {
+  clearInterval(interval);
+  document.getElementById('timer').classList.remove('visible');
+  document.getElementById('done').classList.remove('visible');
+  document.getElementById('setup').classList.remove('hidden');
+}
+
+function restartTimer() {
+  document.getElementById('done').classList.remove('visible');
+  remaining = totalSecs;
+  paused = false;
+  document.getElementById('pauseBtn').textContent = 'Pause';
+
+  const fl = document.getElementById('layerFill');
+  fl.style.transition = 'none';
+  fl.style.height = currentDir === 'fill' ? '0%' : '100%';
+
+  render();
+  clearInterval(interval);
+  interval = setInterval(tick, 1000);
+}
+
+function showDone() {
+  document.getElementById('done').classList.add('visible');
+  // Soft ascending chime
+  try {
+    const ctx = new AudioContext();
+    [[523,0],[659,0.22],[784,0.44],[1047,0.72]].forEach(([freq, t]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'sine'; o.frequency.value = freq;
+      g.gain.setValueAtTime(0, ctx.currentTime + t);
+      g.gain.linearRampToValueAtTime(0.18, ctx.currentTime + t + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 1.4);
+      o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 1.4);
+    });
+  } catch(e) {}
+}
+
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('timer').classList.contains('visible')) return;
+  if (e.code === 'Space') { e.preventDefault(); togglePause(); }
+  if (e.code === 'Escape') goSetup();
+});
+
+// ── Service Worker registration ────────────────────────
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
